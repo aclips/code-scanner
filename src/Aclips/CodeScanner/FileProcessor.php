@@ -285,10 +285,9 @@ class FileProcessor
      * @param string $fileName Имя файла.
      * @return array Массив с данными о функции.
      */
-    private function processFunction(Function_ $function, string $fileName): array
+    private function processFunction(Function_ $function): array
     {
         return [
-            'file' => $fileName,
             'type' => 'function',
             'name' => $function->name,
             'parameters' => $this->processParameters($function->params),

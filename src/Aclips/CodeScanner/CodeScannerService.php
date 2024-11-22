@@ -97,11 +97,29 @@ class CodeScannerService
         $transformedData['last_updated'] = new \MongoDB\BSON\UTCDateTime();
         $transformedData['file_name'] = $fileName;
 
-        $collection->updateOne(
-            ['file_name' => $fileName],
-            ['$set' => $transformedData],
-            ['upsert' => true]
-        );
+        foreach ($transformedData as $key => $value) {
+            if (is_string($value) && mb_detect_encoding($value, 'UTF-8', true) === false) {
+                $transformedData[$key] = utf8_encode($value);
+            }
+        }
+
+        try {
+            // Ensure all strings are UTF-8 encoded
+            foreach ($transformedData as $key => $value) {
+                if (is_string($value) && mb_detect_encoding($value, 'UTF-8', true) === false) {
+                    $transformedData[$key] = utf8_encode($value);
+                }
+            }
+
+            // Perform the update
+            $collection->updateOne(
+                ['file_name' => $fileName],
+                ['$set' => $transformedData],
+                ['upsert' => true]
+            );
+        } catch (\MongoDB\Driver\Exception\UnexpectedValueException $e) {
+            // Optionally rethrow or handle gracefully
+        }
 
         $this->logger->info("Saved data for file: {$fileName}");
     }
