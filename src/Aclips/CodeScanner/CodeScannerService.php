@@ -15,6 +15,7 @@ class CodeScannerService
     private FileProcessor $fileProcessor;
     private Config $config;
     private OutputInterface $output;
+    private $successCallback = null;
 
     public function __construct(
         LoggerInterface $logger,
@@ -73,12 +74,20 @@ class CodeScannerService
     private function processFile(string $filePath): void
     {
         $fileContent = file_get_contents($filePath);
+        $fileHash = hash('sha256', $fileContent);  // Вычисляем хэш-сумму
+
+        // Проверим, есть ли запись с таким хэшем в базе данных
+        if ($this->isFileDataUnchanged($fileHash, $filePath)) {
+            $this->logger->info("File hash has not changed, skipping update: {$filePath}");
+            return;
+        }
+
         $fileData = $this->fileProcessor->processFile($fileContent, $filePath);
 
         $filePath = $this->config->getRelativeFilePath($filePath);
 
         if (!empty($fileData)) {
-            $this->saveFileData($fileData, $filePath);
+            $this->saveFileData($fileData, $filePath, $fileHash);
         }
     }
 
@@ -86,9 +95,10 @@ class CodeScannerService
      * Сохраняет данные о файле в MongoDB
      * @param array $fileData
      * @param string $fileName
+     * @param string $fileHash
      * @return void
      */
-    private function saveFileData(array $fileData, string $fileName): void
+    private function saveFileData(array $fileData, string $fileName, string $fileHash): void
     {
         $collection = $this->mongoClient->selectCollection($this->config->getDbName(), 'files');
 
@@ -96,6 +106,7 @@ class CodeScannerService
 
         $transformedData['last_updated'] = new \MongoDB\BSON\UTCDateTime();
         $transformedData['file_name'] = $fileName;
+        $transformedData['file_hash'] = $fileHash;
 
         foreach ($transformedData as $key => $value) {
             if (is_string($value) && mb_detect_encoding($value, 'UTF-8', true) === false) {
@@ -104,24 +115,43 @@ class CodeScannerService
         }
 
         try {
-            // Ensure all strings are UTF-8 encoded
-            foreach ($transformedData as $key => $value) {
-                if (is_string($value) && mb_detect_encoding($value, 'UTF-8', true) === false) {
-                    $transformedData[$key] = utf8_encode($value);
-                }
-            }
-
-            // Perform the update
-            $collection->updateOne(
+            $result = $collection->updateOne(
                 ['file_name' => $fileName],
                 ['$set' => $transformedData],
                 ['upsert' => true]
             );
+
+            // Если операция была успешной и callback задан, вызываем его
+            if ($result->getModifiedCount() > 0 || $result->getUpsertedCount() > 0) {
+                $this->invokeSuccessCallback($transformedData);  // Передаем transformedData
+            }
         } catch (\MongoDB\Driver\Exception\UnexpectedValueException $e) {
-            // Optionally rethrow or handle gracefully
+            // Обработка исключений
         }
 
         $this->logger->info("Saved data for file: {$fileName}");
+    }
+
+    /**
+     * Устанавливает callback, который будет вызван при успешном добавлении/обновлении данных
+     * @param callable $callback
+     * @return void
+     */
+    public function setSuccessCallback(callable $callback): void
+    {
+        $this->successCallback = $callback;
+    }
+
+    /**
+     * Вызывает success callback, если он задан
+     * @param array $transformedData
+     * @return void
+     */
+    private function invokeSuccessCallback(array $transformedData): void
+    {
+        if ($this->successCallback) {
+            call_user_func($this->successCallback, $transformedData);
+        }
     }
 
     /**
@@ -256,5 +286,19 @@ class CodeScannerService
             'name' => $param['name'] ?? '',
             'type' => $param['type'] ?? null
         ], $parameters);
+    }
+
+    /**
+     * Проверяет, есть ли данные о файле в базе данных
+     * @param string $fileHash
+     * @param string $filePath
+     * @return bool
+     */
+    private function isFileDataUnchanged(string $fileHash, string $filePath): bool
+    {
+        $collection = $this->mongoClient->selectCollection($this->config->getDbName(), 'files');
+        $existingFile = $collection->findOne(['file_name' => $filePath, 'file_hash' => $fileHash]);
+
+        return $existingFile !== null;
     }
 }

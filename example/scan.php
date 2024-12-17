@@ -10,23 +10,20 @@ use Aclips\CodeScanner\FileUtils;
 use Aclips\CodeScanner\Config;
 use Symfony\Component\Console\Output\ConsoleOutput;
 
-// Получаем конфигурацию
-
 $config = new Config(
-    '/home/bitrix/www/local/',
+    '/home/aclips/project/veb/www/local/modules',
     ['vendor', 'migrations'],
     'localhost',
     'codebase',
-    '/home/bitrix/www/'
+    '/home/aclips/project/veb/'
 );
 
-// Set up Monolog logger
 $logger = new Logger('file_processor');
 $logger->pushHandler(new StreamHandler('./log.log', Logger::ERROR));
 
 $mongoClient = $config->getMongoClient();
 
-$scanner = new CodeScannerService(
+$codeScannerService = new CodeScannerService(
     $logger,
     $mongoClient,
     new FileUtils(),
@@ -35,4 +32,10 @@ $scanner = new CodeScannerService(
     new ConsoleOutput()
 );
 
-$scanner->scan();
+$callback = function (array $transformedData) {
+    echo "\nSuccessfully saved the following data\n";
+};
+
+$codeScannerService->setSuccessCallback($callback);
+
+$codeScannerService->scan();
